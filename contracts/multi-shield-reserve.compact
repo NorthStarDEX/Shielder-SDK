@@ -1,0 +1,253 @@
+pragma language_version >= 0.20.0;
+
+import CompactStandardLibrary;
+
+struct ReserveInfo {
+  foreignUnshieldedTokenType: Bytes<32>,
+  shieldedWrapperDomain: Bytes<32>,
+  shieldedWrapperTokenType: Bytes<32>,
+}
+
+export ledger reserves: Map<Bytes<32>, ReserveInfo>;
+
+circuit _deriveWrapperDomain(foreignUnshieldedTokenType: Bytes<32>): Bytes<32> {
+  if (foreignUnshieldedTokenType == default<Bytes<32>>) {
+    return pad(32, 'NS_MULTI_NATIVE_WRAPPER:v1');
+  }
+
+  return persistentHash<[Bytes<32>, Bytes<32>]>([
+    pad(32, 'NS_MULTI_WRAPPER:v1'),
+    foreignUnshieldedTokenType
+  ]);
+}
+
+circuit _computeWrapperTokenType(foreignUnshieldedTokenType: Bytes<32>): Bytes<32> {
+  const wrapperDomain = _deriveWrapperDomain(foreignUnshieldedTokenType);
+  const wrapperTokenType = tokenType(wrapperDomain, kernel.self());
+
+  assert(wrapperTokenType != default<Bytes<32>>, 'MultiShieldReserve: wrapper token type cannot be zero');
+  assert(wrapperTokenType != foreignUnshieldedTokenType, 'MultiShieldReserve: wrapper token collides with foreign token');
+
+  return wrapperTokenType;
+}
+
+circuit _lookupReserve(foreignUnshieldedTokenType: Bytes<32>): ReserveInfo {
+  assert(reserves.member(foreignUnshieldedTokenType), 'MultiShieldReserve: unknown reserve');
+  return reserves.lookup(foreignUnshieldedTokenType);
+}
+
+circuit _deriveShieldNonce(userNonce: Bytes<32>): Bytes<32> {
+  assert(userNonce != default<Bytes<32>>, 'MultiShieldReserve: nonce cannot be zero');
+
+  // The node validates shielded token effects against the disclosed nonce.
+  // Transforming this value inside the circuit causes EffectsCheckFailure (186).
+  return userNonce;
+}
+
+export circuit registerReserve(
+  foreignUnshieldedTokenType: Bytes<32>
+): Bytes<32> {
+  const foreignTokenType = disclose(foreignUnshieldedTokenType);
+  const wrapperDomain = _deriveWrapperDomain(foreignTokenType);
+  const wrapperTokenType = _computeWrapperTokenType(foreignTokenType);
+
+  assert(!reserves.member(foreignTokenType), 'MultiShieldReserve: reserve already registered');
+
+  reserves.insert(
+    foreignTokenType,
+    ReserveInfo {
+      foreignUnshieldedTokenType: foreignTokenType,
+      shieldedWrapperDomain: wrapperDomain,
+      shieldedWrapperTokenType: wrapperTokenType,
+    }
+  );
+
+  return wrapperTokenType;
+}
+
+circuit _shieldInternal(
+  reserve: ReserveInfo,
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+  amount: Uint<64>,
+  shieldNonce: Bytes<32>
+): ShieldedCoinInfo {
+  assert(amount > 0, 'MultiShieldReserve: amount must be greater than zero');
+
+  const actualNonce = _deriveShieldNonce(shieldNonce);
+  const delta = amount as Uint<128>;
+  receiveUnshielded(reserve.foreignUnshieldedTokenType, delta);
+
+  if (reserve.foreignUnshieldedTokenType == default<Bytes<32>>) {
+    const nativeWrapper = mintShieldedToken(
+      reserve.shieldedWrapperDomain,
+      amount,
+      actualNonce,
+      recipient
+    );
+
+    assert(nativeWrapper.color == reserve.shieldedWrapperTokenType, 'MultiShieldReserve: shielded wrapper token type mismatch');
+    assert(nativeWrapper.value == delta, 'MultiShieldReserve: shielded wrapper amount mismatch');
+
+    return nativeWrapper;
+  }
+
+  const contractRecipient = right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
+  const wrapperCoin = mintShieldedToken(
+    reserve.shieldedWrapperDomain,
+    amount,
+    actualNonce,
+    contractRecipient
+  );
+
+  assert(wrapperCoin.color == reserve.shieldedWrapperTokenType, 'MultiShieldReserve: shielded wrapper token type mismatch');
+  assert(wrapperCoin.value == delta, 'MultiShieldReserve: shielded wrapper amount mismatch');
+
+  const sendRes = sendImmediateShielded(wrapperCoin, recipient, delta);
+  return sendRes.sent;
+}
+
+export circuit shield(
+  foreignUnshieldedTokenType: Bytes<32>,
+  amount: Uint<64>,
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+  shieldNonce: Bytes<32>
+): ShieldedCoinInfo {
+  const reserve = _lookupReserve(disclose(foreignUnshieldedTokenType));
+  return _shieldInternal(
+    reserve,
+    disclose(recipient),
+    disclose(amount),
+    disclose(shieldNonce)
+  );
+}
+
+export circuit shieldToCaller(
+  foreignUnshieldedTokenType: Bytes<32>,
+  amount: Uint<64>,
+  shieldNonce: Bytes<32>
+): ShieldedCoinInfo {
+  const reserve = _lookupReserve(disclose(foreignUnshieldedTokenType));
+  const recipient = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+  return _shieldInternal(
+    reserve,
+    recipient,
+    disclose(amount),
+    disclose(shieldNonce)
+  );
+}
+
+circuit _sendShieldedChangeToCaller(sendRes: ShieldedSendResult): [] {
+  if (sendRes.change.is_some) {
+    const caller = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+    sendImmediateShielded(sendRes.change.value, caller, sendRes.change.value.value);
+  }
+}
+
+circuit _sendUnshieldedToUser(reserve: ReserveInfo, amount: Uint<128>, recipientBytes: Bytes<32>): [] {
+  assert(amount > 0, 'MultiShieldReserve: amount must be greater than zero');
+  assert(recipientBytes != default<Bytes<32>>, 'MultiShieldReserve: recipient cannot be zero');
+
+  const recipient = right<ContractAddress, UserAddress>(UserAddress { bytes: recipientBytes });
+  sendUnshielded(reserve.foreignUnshieldedTokenType, amount, recipient);
+}
+
+circuit _burnShieldedWrapperAmount(
+  reserve: ReserveInfo,
+  coin: ShieldedCoinInfo,
+  amount: Uint<128>
+): ShieldedSendResult {
+  assert(amount > 0, 'MultiShieldReserve: amount must be greater than zero');
+  assert(coin.color == reserve.shieldedWrapperTokenType, 'MultiShieldReserve: wrong shielded wrapper token type');
+  assert(coin.nonce != default<Bytes<32>>, 'MultiShieldReserve: shielded coin nonce cannot be zero');
+  assert(coin.value >= amount, 'MultiShieldReserve: insufficient shielded wrapper amount');
+
+  receiveShielded(coin);
+  const sendRes = sendImmediateShielded(coin, shieldedBurnAddress(), amount);
+  _sendShieldedChangeToCaller(sendRes);
+  return sendRes;
+}
+
+export circuit unshield(
+  foreignUnshieldedTokenType: Bytes<32>,
+  coin: ShieldedCoinInfo,
+  amount: Uint<128>,
+  recipientBytes: Bytes<32>
+): ShieldedSendResult {
+  const reserve = _lookupReserve(disclose(foreignUnshieldedTokenType));
+  const unshieldCoin = disclose(coin);
+  const unshieldAmount = disclose(amount);
+  const recipient = disclose(recipientBytes);
+
+  const sendRes = _burnShieldedWrapperAmount(reserve, unshieldCoin, unshieldAmount);
+  _sendUnshieldedToUser(reserve, unshieldAmount, recipient);
+  return sendRes;
+}
+
+pure circuit _addU128(leftValue: Uint<128>, rightValue: Uint<128>): Uint<128> {
+  const sum = (leftValue + rightValue) as Uint<128>;
+  assert(sum >= leftValue, 'MultiShieldReserve: Uint128 addition overflow');
+  return sum;
+}
+
+export circuit unshield4(
+  foreignUnshieldedTokenType: Bytes<32>,
+  coin0: ShieldedCoinInfo,
+  amount0: Uint<128>,
+  coin1: ShieldedCoinInfo,
+  amount1: Uint<128>,
+  coin2: ShieldedCoinInfo,
+  amount2: Uint<128>,
+  coin3: ShieldedCoinInfo,
+  amount3: Uint<128>,
+  recipientBytes: Bytes<32>
+): Uint<128> {
+  const reserve = _lookupReserve(disclose(foreignUnshieldedTokenType));
+  const c0 = disclose(coin0);
+  const c1 = disclose(coin1);
+  const c2 = disclose(coin2);
+  const c3 = disclose(coin3);
+  const a0 = disclose(amount0);
+  const a1 = disclose(amount1);
+  const a2 = disclose(amount2);
+  const a3 = disclose(amount3);
+  const recipient = disclose(recipientBytes);
+  const total01 = _addU128(a0, a1);
+  const total012 = _addU128(total01, a2);
+  const total = _addU128(total012, a3);
+
+  assert(total > 0, 'MultiShieldReserve: total amount must be greater than zero');
+
+  if (a0 > 0) {
+    _burnShieldedWrapperAmount(reserve, c0, a0);
+  }
+  if (a1 > 0) {
+    _burnShieldedWrapperAmount(reserve, c1, a1);
+  }
+  if (a2 > 0) {
+    _burnShieldedWrapperAmount(reserve, c2, a2);
+  }
+  if (a3 > 0) {
+    _burnShieldedWrapperAmount(reserve, c3, a3);
+  }
+
+  _sendUnshieldedToUser(reserve, total, recipient);
+  return total;
+}
+
+export circuit reserveExists(foreignUnshieldedTokenType: Bytes<32>): Boolean {
+  return reserves.member(disclose(foreignUnshieldedTokenType));
+}
+
+export circuit getReserve(foreignUnshieldedTokenType: Bytes<32>): ReserveInfo {
+  return _lookupReserve(disclose(foreignUnshieldedTokenType));
+}
+
+export circuit getShieldedWrapperTokenType(foreignUnshieldedTokenType: Bytes<32>): Bytes<32> {
+  const reserve = _lookupReserve(disclose(foreignUnshieldedTokenType));
+  return reserve.shieldedWrapperTokenType;
+}
+
+export circuit getShieldedWrapperDomain(foreignUnshieldedTokenType: Bytes<32>): Bytes<32> {
+  const reserve = _lookupReserve(disclose(foreignUnshieldedTokenType));
+  return reserve.shieldedWrapperDomain;
+}

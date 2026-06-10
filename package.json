@@ -1,0 +1,80 @@
+{
+  "name": "@utxomaestro/shielder-reserve",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal SDK and artifacts for a multi-token shield reserve Compact contract.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "artifacts/",
+    "contracts/",
+    "scripts/",
+    "src/",
+    "tests/",
+    "utils/",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/apply-midnight-sdk-patches.mjs",
+    "patch:midnight-sdk": "node scripts/apply-midnight-sdk-patches.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "fetch-compactc": "fetch-compactc --version=0.31.0",
+    "compile": "npm run compile:multi-shield-reserve",
+    "compile:all": "npm run compile:multi-shield-reserve",
+    "compile:multi-shield-reserve": "COMPACTC_VERSION=0.31.0 run-compactc contracts/multi-shield-reserve.compact artifacts/MultiShieldReserve",
+    "query:reserves": "node scripts/query-reserves.mjs",
+    "live:multi-reserve": "node scripts/multi-reserve.mjs",
+    "wallet:seed": "node utils/generate-wallet-seed.mjs",
+    "wallet:sync": "node utils/sync-wallet.mjs",
+    "wallet:dust": "node utils/designate-dust.mjs"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-js": "2.5.0",
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/ledger-v8": "8.1.0",
+    "@midnight-ntwrk/midnight-js-compact": "4.1.1",
+    "@midnight-ntwrk/midnight-js-contracts": "4.0.4",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "4.0.4",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "4.0.4",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "4.0.4",
+    "@midnight-ntwrk/midnight-js-network-id": "4.0.4",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "4.0.4",
+    "@midnight-ntwrk/midnight-js-types": "4.0.4",
+    "@midnight-ntwrk/wallet-sdk-abstractions": "2.1.0",
+    "@midnight-ntwrk/wallet-sdk-address-format": "3.1.2",
+    "@midnight-ntwrk/wallet-sdk-dust-wallet": "4.1.0",
+    "@midnight-ntwrk/wallet-sdk-facade": "4.0.1",
+    "@midnight-ntwrk/wallet-sdk-hd": "3.0.2",
+    "@midnight-ntwrk/wallet-sdk-shielded": "3.0.1",
+    "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "3.1.0",
+    "@polkadot/api": "16.5.6",
+    "@polkadot/util": "14.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1"
+  },
+  "overrides": {
+    "@midnight-ntwrk/compact-js": "2.5.0",
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/ledger-v8": "$@midnight-ntwrk/ledger-v8",
+    "@midnight-ntwrk/midnight-js-contracts": "$@midnight-ntwrk/midnight-js-contracts",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "$@midnight-ntwrk/midnight-js-http-client-proof-provider",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "$@midnight-ntwrk/midnight-js-indexer-public-data-provider",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "$@midnight-ntwrk/midnight-js-level-private-state-provider",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "$@midnight-ntwrk/midnight-js-node-zk-config-provider",
+    "@midnight-ntwrk/wallet-sdk-abstractions": "$@midnight-ntwrk/wallet-sdk-abstractions",
+    "@midnight-ntwrk/wallet-sdk-address-format": "$@midnight-ntwrk/wallet-sdk-address-format",
+    "@midnight-ntwrk/wallet-sdk-dust-wallet": "$@midnight-ntwrk/wallet-sdk-dust-wallet",
+    "@midnight-ntwrk/wallet-sdk-facade": "$@midnight-ntwrk/wallet-sdk-facade",
+    "@midnight-ntwrk/wallet-sdk-hd": "$@midnight-ntwrk/wallet-sdk-hd",
+    "@midnight-ntwrk/wallet-sdk-shielded": "$@midnight-ntwrk/wallet-sdk-shielded",
+    "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "$@midnight-ntwrk/wallet-sdk-unshielded-wallet"
+  }
+}
