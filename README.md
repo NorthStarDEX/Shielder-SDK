@@ -11,8 +11,8 @@ Native NIGHT token type:
 ## Install
 
 ```bash
-git clone git@github.com:UTxOMaestro/ShielderReserve.git
-cd ShielderReserve
+git clone https://github.com/NorthStarDEX/Shielder-SDK.git
+cd Shielder-SDK
 npm install
 npm test
 ```
